@@ -4,3 +4,7 @@
 .idea
 
 /yolov8n.pt
+
+.DS_Store
+
+screenshots/

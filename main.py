@@ -6,6 +6,9 @@ from collections import defaultdict
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from insightface.app import FaceAnalysis
 from sklearn.metrics.pairwise import cosine_similarity
+import time
+import pyttsx3
+import os
 
 # Check if MPS (Metal Performance Shader) is available
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -19,26 +22,33 @@ tracker = DeepSort(max_age=30)
 # Load InsightFace (ArcFace) for face recognition
 app = FaceAnalysis(name="buffalo_l")  # Uses a high-accuracy model
 app.prepare(ctx_id=0, det_size=(640, 640))
+engine = pyttsx3.init()
 
-# Known faces database (embeddings)
+# Known faces database (embeddings) loaded from subdirectories in the 'faces' folder
 known_face_encodings = []
-known_face_names = ["James", "David"]
+known_face_names = []
 
-
-# Load images and compute embeddings
 def get_face_embedding(image_path):
     image = cv2.imread(image_path)
     faces = app.get(image)
     return faces[0].embedding if faces else None
 
-
-james_embedding = get_face_embedding("james.jpg")
-david_embedding = get_face_embedding("david.png")
-
-if james_embedding is not None:
-    known_face_encodings.append(james_embedding)
-if david_embedding is not None:
-    known_face_encodings.append(david_embedding)
+faces_dir = "faces"
+for person_name in os.listdir(faces_dir):
+    person_path = os.path.join(faces_dir, person_name)
+    if os.path.isdir(person_path):
+        embeddings = []
+        for filename in os.listdir(person_path):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+                image_path = os.path.join(person_path, filename)
+                embedding = get_face_embedding(image_path)
+                if embedding is not None:
+                    embeddings.append(embedding)
+        if embeddings:
+            # Compute the average embedding for this person
+            avg_embedding = np.mean(embeddings, axis=0)
+            known_face_encodings.append(avg_embedding)
+            known_face_names.append(person_name.capitalize())
 
 # Open webcam
 cap = cv2.VideoCapture(0)  # 0 for webcam
@@ -49,6 +59,7 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 # Store tracked people
 tracked_people = defaultdict(int)
+greeted = {}
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -115,6 +126,28 @@ while cap.isOpened():
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
         tracked_people[track_id] += 1
+
+        if face_name != "Unknown" and track_id not in greeted:
+            greeting_text = f"Hello, {face_name}!"
+            # Display greeting below the bounding box
+            cv2.putText(frame, greeting_text, (x1, y2 + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+            # Ensure the screenshots directory exists
+            screenshot_dir = "screenshots"
+            if not os.path.exists(screenshot_dir):
+                os.makedirs(screenshot_dir)
+
+            # Save a screenshot of the current frame with a timestamp
+            screenshot_filename = os.path.join(screenshot_dir, f"greeting_{face_name}_{time.strftime('%Y%m%d_%H%M%S')}.png")
+            cv2.imwrite(screenshot_filename, frame)
+
+            # Play audio greeting
+            greeting_audio = f"Hello {face_name}, smile for a picture!"
+            engine.say(greeting_audio)
+            engine.runAndWait()
+
+            greeted[track_id] = True
 
     # Display person count
     cv2.putText(frame, f'Persons Count: {len(tracked_people)}', (20, 40),
